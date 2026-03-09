@@ -204,7 +204,7 @@
 - Devpost 文字描述 + 架构图上传
 
 **可选加分（Mar 15 如有余力）**：
-- dev.to / Medium 发一篇 "How we built TrackBite with Gemini 2.0" → **+0.6 分**
+- dev.to / Medium 发一篇 "How we built TrackBite with Gemini 3.0" → **+0.6 分**
 
 ---
 

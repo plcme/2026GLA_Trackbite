@@ -10,6 +10,13 @@
 **1. GCP Project + Billing 启用**
 - 实现什么：项目的云端根基，所有 GCP 服务的前提条件
 - 为什么选：比赛强制要求后端运行在 GCP 上，且需提供部署证明截图
+Vertex AI API (核心：用于调用 Gemini 3.0 Flash)
+Cloud Run API (核心：用于部署后端容器)
+Cloud Firestore API (核心：用于存储食材和健康数据)
+Cloud Storage API (核心：用于存放用户上传的图片/PDF)
+Google Calendar API (核心：用于同步用户日程)
+Cloud Build API (加分项：用于自动化部署)
+Artifact Registry API (加分项：用于托管 Docker 镜像)
 - Setup 位置：**浏览器 (GCP Console)**
 - 耗时：A 0.5h
 
@@ -83,6 +90,148 @@
 - 为什么选：比 Flask 更现代，自动生成 OpenAPI 文档、原生异步支持（配合 Playwright 异步操作），类型提示友好
 - Setup 位置：**终端 (pip install)**
 - 耗时：A 3h
+
+### FastAPI 使用规范
+
+#### 1. 安装与环境
+```bash
+pip install fastapi "uvicorn[standard]" pydantic python-multipart
+```
+在 `.env` 文件中配置以下变量：
+```
+APP_HOST=0.0.0.0
+APP_PORT=8080
+CORS_ORIGINS=http://localhost:3000
+```
+本地启动命令：
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8080
+```
+
+---
+
+#### 2. 项目文件结构
+```
+backend/
+├── main.py                  # FastAPI 应用入口，注册路由、CORS、启动事件
+├── routers/
+│   ├── ocr.py               # /parse-receipt、/recommend 端点
+│   ├── inventory.py         # /inventory CRUD 端点
+│   └── navigator.py         # /navigate-search 端点
+├── models/
+│   └── schemas.py           # 所有 Pydantic 数据模型定义
+├── services/
+│   ├── gemini_service.py    # 封装 Google GenAI SDK 调用逻辑
+│   ├── firestore_service.py # 封装 Firestore 读写操作
+│   └── playwright_service.py# 封装 Playwright 截图与操作逻辑
+├── .env                     # 本地密钥（不提交 Git）
+└── requirements.txt
+```
+
+---
+
+#### 3. 端点规范（按迭代顺序）
+
+**Iteration 0**
+
+| 端点 | 方法 | 用途 |
+|---|---|---|
+| `/health` | GET | Cloud Run 存活检测，返回 `{"status": "ok"}` |
+| `/gemini-test` | POST | 发送测试 Prompt 给 Gemini，返回原始文字响应，验证 SDK 连通性 |
+
+**Iteration 1**
+
+| 端点 | 方法 | 用途 |
+|---|---|---|
+| `/parse-receipt` | POST | 接收图片文件上传，调用 Gemini OCR，返回结构化食材 JSON |
+| `/recommend` | POST | 接收食材列表 + 健康档案，调用 Gemini 生成膳食建议文字 |
+
+**Iteration 2**
+
+| 端点 | 方法 | 用途 |
+|---|---|---|
+| `/inventory` | GET | 从 Firestore 读取当前所有库存食材 |
+| `/inventory` | POST | 将新食材写入 Firestore（OCR 解析后自动调用） |
+| `/inventory/{id}` | PUT | 更新指定食材数量或过期状态 |
+| `/inventory/{id}` | DELETE | 删除指定食材条目 |
+
+**Iteration 4**
+
+| 端点 | 方法 | 用途 |
+|---|---|---|
+| `/navigate-search` | POST | 接收目标食材名，触发 Playwright 截图 → Gemini 识别 → 执行操作，返回 Before/After 截图 URL |
+
+---
+
+#### 4. Pydantic 数据模型（`models/schemas.py`）
+
+```python
+# 食材条目
+class IngredientItem(BaseModel):
+    name: str
+    quantity: float
+    unit: str
+    purchase_date: str        # ISO 格式，如 "2026-03-07"
+
+# 健康档案
+class HealthProfile(BaseModel):
+    allergies: list[str]      # 如 ["seafood", "nuts"]
+    conditions: list[str]     # 如 ["hypertension", "diabetes"]
+    preferences: list[str]    # 如 ["low_carb", "high_protein"]
+
+# 膳食建议
+class MealRecommendation(BaseModel):
+    dish_name: str
+    reasoning: str
+    channel: str              # "cook" | "takeout" | "skip"
+    buy_items: list[str]      # 需要补购的食材
+
+# 导航请求
+class NavigationRequest(BaseModel):
+    target_ingredient: str
+    mock_page_url: str        # 默认指向本地 Mock 购物页
+
+# 导航结果
+class NavigationResult(BaseModel):
+    success: bool
+    steps_completed: int
+    screenshot_before_url: str
+    screenshot_after_url: str
+    gemini_reasoning: str
+```
+
+---
+
+#### 5. CORS 配置（`main.py`）
+
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000",   # Next.js 本地开发
+                   "https://<cloud-run-url>"], # 生产环境
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+---
+
+#### 6. 与其他工具的连接方式
+
+- **Gemini SDK**：在 `services/gemini_service.py` 中初始化客户端，端点以 `async def` 形式调用，`await` Gemini 响应
+- **Firestore**：在 `services/firestore_service.py` 中初始化 `AsyncClient`，在应用 `startup` 事件中建立连接，跨请求复用同一客户端实例
+- **Playwright**：在 `services/playwright_service.py` 中以 `async with async_playwright()` 方式启动浏览器，截图保存至 GCS 后返回公开 URL
+
+---
+
+#### 7. Cloud Run 启动配置（`Dockerfile` 最后一行）
+
+```dockerfile
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+Cloud Run 默认监听 `8080` 端口，`/health` 端点作为健康检查路径配置在 Cloud Run 控制台。
 
 **12. Uvicorn**
 - 实现什么：FastAPI 的 ASGI 生产服务器
