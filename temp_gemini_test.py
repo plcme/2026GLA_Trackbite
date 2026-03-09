@@ -15,13 +15,23 @@
 # except Exception as e:
 #     print(f"发生错误: {e}")
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-# 设置你的 API Key
-genai.configure(api_key="YOUR_API_KEY")
+# 初始化 Client 并指定使用 Vertex AI
+client = genai.Client(
+    vertexai=True, 
+    project='project-e7712b89-68ab-42ce-ba8', 
+    location='us-central1' # 或者其他支持的 Region
+)
 
-# 列出所有支持 generateContent 的模型
-print("可用模型列表：")
-for m in genai.list_models():
-    if 'generateContent' in m.supported_generation_methods:
-        print(f"ID: {m.name} | 名称: {m.display_name}")
+# 发送请求
+response = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents="请解释什么是量子纠缠？"
+)
+
+# for model in client.models.list():
+#     print(model.name)
+
+print(response.text)

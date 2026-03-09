@@ -26,7 +26,9 @@ def get_client() -> genai.Client:
 
 async def test_prompt(prompt: str) -> str:
     client = get_client()
-    model = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+    model = os.environ.get("GEMINI_MODEL")
+    if not model:
+        raise ValueError("GEMINI_MODEL environment variable is not set")
 
     response = client.models.generate_content(
         model=model,
